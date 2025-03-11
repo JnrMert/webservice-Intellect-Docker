@@ -1,5 +1,5 @@
 // soap-middleware.js
-// SOAPAction düzeltilmiş SOAP proxy middleware
+// SOAPAction ve Content-Type düzeltilmiş SOAP proxy middleware
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -79,34 +79,114 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
     const clientSoapAction = req.headers['soapaction'] || '';
     logger.debug(`[${requestId}] Client SOAPAction: ${clientSoapAction}`);
     logger.debug(`[${requestId}] Kullanılacak SOAPAction: ${config.soapAction}`);
+
+    // Request XML'den içeriği çıkartma
+    let xmlContent = requestBody;
+    try {
+      // <Request> ... </Request> içindeki veriyi çıkartmaya çalış
+      const requestTagMatch = /<Request>(.*?)<\/Request>/s.exec(xmlContent);
+      if (requestTagMatch && requestTagMatch[1]) {
+        xmlContent = requestTagMatch[1].trim();
+        // XML entity'lerini decode et (&lt; -> <, &gt; -> >, vb.)
+        xmlContent = xmlContent.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+        logger.debug(`[${requestId}] Çıkartılan Request içeriği: ${xmlContent}`);
+      }
+    } catch (e) {
+      logger.warn(`[${requestId}] XML içeriği çıkartılamadı: ${e.message}`);
+    }
     
     // İsteği doğrudan hedef sunucuya yönlendir
     logger.info(`[${requestId}] İstek ${config.targetUrl} adresine yönlendiriliyor`);
     
-    // Intellect'e özel - XML içeriğini application/x-www-form-urlencoded olarak gönder
-    const response = await axios.post(config.targetUrl, 
-      new URLSearchParams({ 'Request': requestBody }), 
-      {
+    // Farklı format türlerini dene - ilk olarak XML formatında dene
+    try {
+      logger.info(`[${requestId}] XML formatında istek deneniyor`);
+      const response = await axios.post(config.targetUrl, xmlContent, {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'SOAPAction': config.soapAction // Sabit değer kullan
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': config.soapAction
         },
         responseType: 'text',
-        timeout: 30000 // 30 saniye zaman aşımı
+        timeout: 30000
       });
-    
-    // Yanıtı logla
-    logger.info(`[${requestId}] Hedef sunucudan ${response.status} yanıtı alındı`);
-    logger.debug(`[${requestId}] Yanıt gövdesi: ${response.data}`);
-    
-    // Yanıtı istemciye gönder
-    res.status(response.status);
-    res.set('Content-Type', 'text/xml; charset=utf-8');
-    res.send(response.data);
-    
-    // İşlem süresini logla
-    const duration = Date.now() - startTime;
-    logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
+      
+      // Yanıtı logla
+      logger.info(`[${requestId}] Hedef sunucudan ${response.status} yanıtı alındı (XML)`);
+      logger.debug(`[${requestId}] Yanıt gövdesi: ${response.data}`);
+      
+      // Yanıtı istemciye gönder
+      res.status(response.status);
+      res.set('Content-Type', 'text/xml; charset=utf-8');
+      res.send(response.data);
+      
+      // İşlem süresini logla
+      const duration = Date.now() - startTime;
+      logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
+      return;
+    } catch (xmlError) {
+      logger.warn(`[${requestId}] XML formatında istek başarısız: ${xmlError.message}`);
+      
+      // XML başarısız olursa form-urlencoded dene
+      try {
+        logger.info(`[${requestId}] Form-urlencoded formatında istek deneniyor`);
+        const formResponse = await axios.post(config.targetUrl, 
+          new URLSearchParams({ 'Request': xmlContent }), 
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'SOAPAction': config.soapAction
+            },
+            responseType: 'text',
+            timeout: 30000
+          });
+        
+        // Yanıtı logla
+        logger.info(`[${requestId}] Hedef sunucudan ${formResponse.status} yanıtı alındı (Form)`);
+        logger.debug(`[${requestId}] Yanıt gövdesi: ${formResponse.data}`);
+        
+        // Yanıtı istemciye gönder
+        res.status(formResponse.status);
+        res.set('Content-Type', 'text/xml; charset=utf-8');
+        res.send(formResponse.data);
+        
+        // İşlem süresini logla
+        const duration = Date.now() - startTime;
+        logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
+        return;
+      } catch (formError) {
+        logger.warn(`[${requestId}] Form-urlencoded formatında istek başarısız: ${formError.message}`);
+        
+        // Orijinal SOAP XML'i olduğu gibi göndermeyi dene
+        try {
+          logger.info(`[${requestId}] Orijinal SOAP XML formatında istek deneniyor`);
+          const soapResponse = await axios.post(config.targetUrl, requestBody, {
+            headers: {
+              'Content-Type': 'text/xml; charset=utf-8',
+              'SOAPAction': config.soapAction
+            },
+            responseType: 'text',
+            timeout: 30000
+          });
+          
+          // Yanıtı logla
+          logger.info(`[${requestId}] Hedef sunucudan ${soapResponse.status} yanıtı alındı (SOAP XML)`);
+          logger.debug(`[${requestId}] Yanıt gövdesi: ${soapResponse.data}`);
+          
+          // Yanıtı istemciye gönder
+          res.status(soapResponse.status);
+          res.set('Content-Type', 'text/xml; charset=utf-8');
+          res.send(soapResponse.data);
+          
+          // İşlem süresini logla
+          const duration = Date.now() - startTime;
+          logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
+          return;
+        } catch (soapError) {
+          logger.error(`[${requestId}] Tüm istek formatları başarısız oldu`);
+          throw soapError;
+        }
+      }
+    }
     
   } catch (error) {
     logger.error(`[${requestId}] Hata oluştu: ${error.message}`);
