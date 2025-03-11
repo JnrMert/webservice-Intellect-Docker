@@ -1,5 +1,5 @@
 // soap-middleware.js
-// Basit bir SOAP proxy middleware
+// SOAPAction düzeltilmiş SOAP proxy middleware
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -9,14 +9,12 @@ const winston = require('winston');
 
 // Loglama konfigürasyonu
 const logger = winston.createLogger({
-  level: 'info',
+  level: 'debug', // Daha detaylı log için debug seviyesine çıkarıldı
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
   ),
   transports: [
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'combined.log' }),
     new winston.transports.Console({
       format: winston.format.simple()
     })
@@ -27,57 +25,71 @@ const logger = winston.createLogger({
 const config = {
   // Hedef Intellect SOAP servisi
   targetUrl: process.env.TARGET_URL || 'http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx',
-  // SOAP endpoint yolu
-  soapEndpoint: '/Intellect/ExecuteTransaction.asmx',
-  // HTTP portu
-  port: process.env.PORT || 3000
+  // HTTP portu - Render tarafından sağlanan PORT değişkenini kullan
+  port: process.env.PORT || 3000,
+  // Doğru SOAPAction - test12.probizyazilim.com için gerekli değer
+  soapAction: '"http://tempuri.org/Intellect/ExecuteTransaction/ExecuteTransaction"'
 };
 
 const app = express();
 
-// HTTP isteklerini logla
+// Tüm gelen istekleri logla
 app.use(morgan('combined'));
 
 // Raw body parser, SOAP XML'i işlemek için
 app.use(express.raw({
-  type: ['text/xml', 'application/soap+xml'],
+  type: ['text/*', 'application/*'],
   limit: '5mb'
 }));
 
+// URL-encoded parser
+app.use(express.urlencoded({ extended: true }));
+
+// JSON parser
+app.use(express.json());
+
+// Kök dizin için basit bir yanıt
+app.get('/', (req, res) => {
+  logger.info('Kök dizine istek geldi');
+  res.send('SOAP Proxy Middleware aktif. /Intellect/ExecuteTransaction.asmx adresine SOAP isteklerinizi gönderin.');
+});
+
 // Ana SOAP endpoint'i
-app.post(config.soapEndpoint, async (req, res) => {
+app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
   const startTime = Date.now();
   const requestId = Date.now().toString();
   
   logger.info(`[${requestId}] Yeni SOAP isteği alındı`);
+  logger.info(`[${requestId}] Content-Type: ${req.headers['content-type']}`);
   
   try {
     // İsteği logla
-    const requestBody = req.body.toString('utf-8');
+    let requestBody = '';
+    if (Buffer.isBuffer(req.body)) {
+      requestBody = req.body.toString('utf-8');
+    } else if (typeof req.body === 'object') {
+      requestBody = JSON.stringify(req.body);
+    } else {
+      requestBody = req.body;
+    }
+    
     logger.debug(`[${requestId}] İstek gövdesi: ${requestBody}`);
     
-    // SOAPAction başlığını alma
-    const soapAction = req.headers['soapaction'] || '';
-    logger.debug(`[${requestId}] SOAPAction: ${soapAction}`);
+    // SOAPAction başlığını alma - ama hedef sunucuya gönderirken yapılandırma dosyasındaki değeri kullan
+    const clientSoapAction = req.headers['soapaction'] || '';
+    logger.debug(`[${requestId}] Client SOAPAction: ${clientSoapAction}`);
+    logger.debug(`[${requestId}] Kullanılacak SOAPAction: ${config.soapAction}`);
     
-    // SOAP içeriği doğrudan iletiliyor, CDATA işlenmesi gerekmez
-    // Ancak talep edilirse CDATA işleme kodu eklenebilir
-    let processedBody = requestBody;
-    
-    // İleri işleme gerekiyorsa burada yapılabilir
-    // Örnek: XML içeriğini nesneye dönüştürme, içeriğe ek bilgi ekleme vb.
-    
-    // İsteği hedef sunucuya yönlendir
+    // İsteği doğrudan hedef sunucuya yönlendir
     logger.info(`[${requestId}] İstek ${config.targetUrl} adresine yönlendiriliyor`);
     
     // Intellect'e özel - XML içeriğini application/x-www-form-urlencoded olarak gönder
-    // İçeriği Request parametresine yerleştir
     const response = await axios.post(config.targetUrl, 
-      new URLSearchParams({ 'Request': processedBody }), 
+      new URLSearchParams({ 'Request': requestBody }), 
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'SOAPAction': soapAction
+          'SOAPAction': config.soapAction // Sabit değer kullan
         },
         responseType: 'text',
         timeout: 30000 // 30 saniye zaman aşımı
@@ -98,6 +110,7 @@ app.post(config.soapEndpoint, async (req, res) => {
     
   } catch (error) {
     logger.error(`[${requestId}] Hata oluştu: ${error.message}`);
+    if (error.stack) logger.error(`[${requestId}] Stack: ${error.stack}`);
     
     if (error.response) {
       logger.error(`[${requestId}] Yanıt durumu: ${error.response.status}`);
@@ -133,43 +146,61 @@ app.post(config.soapEndpoint, async (req, res) => {
 });
 
 // WSDL dosyası isteği için endpoint
-app.get(`${config.soapEndpoint}?wsdl`, (req, res) => {
-  // WSDL dosyasını oku ve gönder
-  const wsdlPath = path.join(__dirname, 'service.wsdl');
-  
-  if (fs.existsSync(wsdlPath)) {
-    logger.info('WSDL dosyası istendi ve gönderildi');
-    res.type('application/xml');
-    res.sendFile(wsdlPath);
-  } else {
-    // WSDL dosyası yoksa hedef servisten al
-    logger.info('Lokal WSDL dosyası bulunamadı, hedef servisten isteniyor');
+app.get('/Intellect/ExecuteTransaction.asmx', (req, res) => {
+  logger.info('ExecuteTransaction.asmx endpoint\'ine GET isteği geldi');
+  if (req.query.wsdl !== undefined) {
+    // WSDL dosyasını oku ve gönder
+    logger.info('WSDL dosyası istendi');
+    
+    // Hedef servisten WSDL'i al
     axios.get(`${config.targetUrl}?wsdl`)
       .then(response => {
+        logger.info('WSDL alındı ve gönderiliyor');
         res.type('application/xml');
         res.send(response.data);
       })
       .catch(error => {
         logger.error(`WSDL alınamadı: ${error.message}`);
-        res.status(404).send('WSDL bulunamadı');
+        // Yerel WSDL dosyasını göndermeyi dene
+        const wsdlPath = path.join(__dirname, 'service.wsdl');
+        if (fs.existsSync(wsdlPath)) {
+          logger.info('Yerel WSDL dosyası gönderiliyor');
+          res.type('application/xml');
+          res.sendFile(wsdlPath);
+        } else {
+          res.status(404).send('WSDL bulunamadı');
+        }
       });
+  } else {
+    // WSDL sorgusu değilse, bir açıklama mesajı gönder
+    res.send('SOAP Servisi aktif. WSDL için ?wsdl parametresini ekleyin veya SOAP isteklerinizi buraya POST edin.');
   }
 });
 
 // Durum kontrolü için basit bir endpoint
 app.get('/status', (req, res) => {
+  logger.info('Durum kontrolü yapıldı');
   res.json({
     status: 'up',
     uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    targetUrl: config.targetUrl,
+    soapAction: config.soapAction
   });
+});
+
+// Hata ayıklama için herhangi bir yola yapılan istekleri logla
+app.use((req, res, next) => {
+  logger.info(`Bilinmeyen endpoint'e istek: ${req.method} ${req.path}`);
+  res.status(404).send('Endpoint bulunamadı.');
 });
 
 // Sunucuyu başlat
 app.listen(config.port, () => {
   logger.info(`SOAP Middleware ${config.port} portunda başlatıldı`);
   logger.info(`Hedef URL: ${config.targetUrl}`);
-  logger.info(`SOAP Endpoint: ${config.soapEndpoint}`);
+  logger.info(`SOAP Endpoint: /Intellect/ExecuteTransaction.asmx`);
+  logger.info(`SOAPAction: ${config.soapAction}`);
 });
 
 // Beklenmedik hatalar için işleyici
