@@ -1,0 +1,22 @@
+{
+  "name": "soap-proxy-middleware",
+  "version": "1.0.0",
+  "description": "Intellect SOAP proxy middleware",
+  "main": "soap-middleware.js",
+  "scripts": {
+    "start": "node soap-middleware.js",
+    "dev": "nodemon soap-middleware.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "express": "^4.18.2",
+    "morgan": "^1.10.0",
+    "winston": "^3.9.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

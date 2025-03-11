@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions 
+  xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+  xmlns:tns="http://tempuri.org/Intellect/ExecuteTransaction"
+  xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  name="ExecuteTransaction"
+  targetNamespace="http://tempuri.org/Intellect/ExecuteTransaction">
+  
+  <wsdl:types>
+    <xsd:schema targetNamespace="http://tempuri.org/Intellect/ExecuteTransaction">
+      <xsd:element name="ExecuteTransaction">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="Request" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="ExecuteTransactionResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="ExecuteTransactionResult" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:schema>
+  </wsdl:types>
+  
+  <wsdl:message name="ExecuteTransactionSoapRequest">
+    <wsdl:part element="tns:ExecuteTransaction" name="parameters"/>
+  </wsdl:message>
+  <wsdl:message name="ExecuteTransactionSoapResponse">
+    <wsdl:part element="tns:ExecuteTransactionResponse" name="parameters"/>
+  </wsdl:message>
+  
+  <wsdl:portType name="ExecuteTransactionSoap">
+    <wsdl:operation name="ExecuteTransaction">
+      <wsdl:input message="tns:ExecuteTransactionSoapRequest"/>
+      <wsdl:output message="tns:ExecuteTransactionSoapResponse"/>
+    </wsdl:operation>
+  </wsdl:portType>
+  
+  <wsdl:binding name="ExecuteTransactionSoap" type="tns:ExecuteTransactionSoap">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="ExecuteTransaction">
+      <soap:operation soapAction="http://tempuri.org/Intellect/ExecuteTransaction/ExecuteTransaction"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  
+  <wsdl:service name="ExecuteTransaction">
+    <wsdl:port binding="tns:ExecuteTransactionSoap" name="ExecuteTransactionSoap">
+      <soap:address location="http://localhost:3000/Intellect/ExecuteTransaction.asmx"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>
