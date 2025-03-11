@@ -1,91 +1,101 @@
-# SOAP Proxy Middleware
+# Intellect SOAP Proxy Middleware
 
-Bu proje, iki Intellect sistemi arasında SOAP isteklerini yönlendiren basit bir middleware uygulamasıdır. EGT3 sisteminden gelen SOAP isteklerini test12.probizyazilim.com'a iletir.
+Bu proje, iki Intellect sistemi arasında SOAP XML verilerini yönlendiren bir middleware uygulamasıdır. EGT3 sisteminden gelen SOAP isteklerini test12.probizyazilim.com'a HTTP POST formatında iletir.
 
 ## Özellikler
 
-- Otomatik SOAP isteği dinleme ve yönlendirme
-- Tüm istekleri ve yanıtları loglama
-- Hata takibi ve raporlama
-- CDATA içeren XML'leri işleme
-- Durum kontrolü için sağlık endpoint'i
+- EGT3 ile test12.probizyazilim.com arasında otomatik veri aktarımı
+- SOAP isteklerini HTTP POST formatına dönüştürme
+- XML verilerinin uygun formatta çıkarılması ve işlenmesi
+- Kapsamlı hata işleme ve loglama
+- Otomatik başlama ve sürekli çalışma (arka planda servis olarak)
+
+## Teknik Detaylar
+
+Middleware aşağıdaki işlem akışını gerçekleştirir:
+
+1. **İstek Alımı**: EGT3'ten SOAP formatında XML alır
+2. **İstek İşleme**: XML içinden `<Request>` etiketleri arasındaki veriyi çıkarır
+3. **Format Dönüşümü**: XML verisini HTTP POST formatına dönüştürür
+4. **İstek Yönlendirme**: Veriyi test12.probizyazilim.com'a gönderir
+5. **Yanıt İşleme**: Alınan yanıtı SOAP formatına çevirir
+6. **Yanıt Gönderme**: EGT3'e SOAP yanıtını iletir
 
 ## Kurulum
 
 ### Gereksinimler
 
-- Node.js 14 veya daha yeni bir sürüm
+- Node.js 14.0 veya üstü
 - npm veya yarn
 
-### Yükleme
+### Yerel Kurulum
 
 ```bash
-# Repoyu klonlayın
-git clone [repo_url]
-cd soap-proxy-middleware
-
-# Bağımlılıkları yükleyin
+# Bağımlılıkları yükle
 npm install
-```
 
-### Yapılandırma
-
-Middleware'i yapılandırmak için aşağıdaki ortam değişkenlerini kullanabilirsiniz:
-
-- `PORT`: Uygulamanın çalışacağı port (varsayılan: 3000)
-- `TARGET_URL`: Hedef Intellect SOAP servisi URL'i (varsayılan: test12.probizyazilim.com)
-
-### Çalıştırma
-
-```bash
-# Normal çalıştırma
+# Uygulamayı başlat
 npm start
-
-# Geliştirme modunda çalıştırma (otomatik yeniden başlatma)
-npm run dev
 ```
 
-## Docker ile Çalıştırma
+### Render.com Üzerinde Dağıtım
 
-```bash
-# Docker image'ını oluştur
-docker build -t soap-middleware .
-
-# Çalıştır
-docker run -p 3000:3000 -e TARGET_URL=http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx soap-middleware
-```
-
-### Docker Compose ile Çalıştırma
-
-```bash
-docker-compose up -d
-```
+1. Render.com hesabınızda yeni bir Web Servisi oluşturun
+2. GitHub/GitLab reponuzu bağlayın
+3. Aşağıdaki ayarları yapın:
+   - **Name**: Intellect-SOAP-Proxy (veya istediğiniz bir isim)
+   - **Environment**: Node
+   - **Build Command**: `npm install`
+   - **Start Command**: `node soap-middleware.js`
+4. Çevre değişkenlerini ayarlayın:
+   - `TARGET_URL`: `http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx/ExecuteTransaction`
+5. "Create Web Service" butonuna tıklayın
 
 ## Kullanım
 
-Middleware'in SOAP endpoint'i şudur:
+Middleware, EGT3 sisteminden gelen SOAP isteklerini aşağıdaki endpoint'te bekler:
+
 ```
-http://localhost:3000/Intellect/ExecuteTransaction.asmx
+https://[sizin-render-url].onrender.com/Intellect/ExecuteTransaction.asmx
 ```
 
-WSDL belgesine buradan erişebilirsiniz:
-```
-http://localhost:3000/Intellect/ExecuteTransaction.asmx?wsdl
-```
+EGT3 sistemindeki "AktarmaAdresi" alanına bu URL'i ekleyebilirsiniz.
 
-Servisin durumunu kontrol etmek için:
-```
-http://localhost:3000/status
-```
+## Hata Giderme
+
+Yaygın hatalar ve çözümleri:
+
+### 415 Unsupported Media Type
+
+Bu hata, istek formatının desteklenmediğini gösterir. Middleware bu hatayı otomatik olarak ele alır ve doğru formatta (HTTP POST) istek gönderir.
+
+### 500 Internal Server Error
+
+Hedef sunucudan kaynaklanan bir hatadır. Logları inceleyerek hatanın detaylarını görebilirsiniz.
 
 ## Loglar
 
-Loglar `combined.log` ve `error.log` dosyalarında saklanır. Ayrıca konsola da yazılır.
+Middleware, tüm işlemleri detaylı olarak loglar. Render.com'da "Logs" sekmesinden bu logları görüntüleyebilirsiniz.
 
-## Sorun Giderme
+Örnek log:
 
-En yaygın sorunlar ve çözümleri:
+```
+[1741684992263] Yeni SOAP isteği alındı
+[1741684992263] İstek HTTP POST formatında http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx/ExecuteTransaction adresine yönlendiriliyor
+[1741684992263] Hedef sunucudan 200 yanıtı alındı
+[1741684992263] İşlem tamamlandı, süre: 405ms
+```
 
-1. **Bağlantı Hatası**: Hedef URL'in doğru ve erişilebilir olduğundan emin olun.
-2. **SOAP İstek Formatı**: İstek formatının hedef sistemin beklediği formatta olduğundan emin olun.
-3. **Zaman Aşımı Sorunları**: Bağlantı zaman aşımı varsayılan olarak 30 saniyedir. Gerekirse kodu düzenleyerek değiştirebilirsiniz.
+## Durum Kontrolü
+
+Middleware'in çalışıp çalışmadığını kontrol etmek için:
+
+```
+https://[sizin-render-url].onrender.com/status
+```
+
+Bu endpoint, middleware'in durumu, çalışma süresi ve hedef URL bilgilerini JSON formatında döndürür.
+
+## Lisans
+
+MIT
