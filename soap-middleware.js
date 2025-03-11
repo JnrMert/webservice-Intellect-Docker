@@ -1,5 +1,5 @@
 // soap-middleware.js
-// SOAPAction ve Content-Type düzeltilmiş SOAP proxy middleware
+// HTTP POST formatına göre düzenlenmiş SOAP proxy middleware
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -9,7 +9,7 @@ const winston = require('winston');
 
 // Loglama konfigürasyonu
 const logger = winston.createLogger({
-  level: 'debug', // Daha detaylı log için debug seviyesine çıkarıldı
+  level: 'debug',
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
@@ -23,12 +23,10 @@ const logger = winston.createLogger({
 
 // Uygulama konfigürasyonu
 const config = {
-  // Hedef Intellect SOAP servisi
-  targetUrl: process.env.TARGET_URL || 'http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx',
-  // HTTP portu - Render tarafından sağlanan PORT değişkenini kullan
-  port: process.env.PORT || 3000,
-  // Doğru SOAPAction - test12.probizyazilim.com için gerekli değer
-  soapAction: '"http://tempuri.org/Intellect/ExecuteTransaction/ExecuteTransaction"'
+  // Hedef URL - asıl API endpoint'i
+  targetUrl: process.env.TARGET_URL || 'http://test12.probizyazilim.com/Intellect/ExecuteTransaction.asmx/ExecuteTransaction',
+  // HTTP portu
+  port: process.env.PORT || 3000
 };
 
 const app = express();
@@ -60,7 +58,7 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
   const requestId = Date.now().toString();
   
   logger.info(`[${requestId}] Yeni SOAP isteği alındı`);
-  logger.info(`[${requestId}] Content-Type: ${req.headers['content-type']}`);
+  logger.info(`[${requestId}] Content-Type: ${req.headers['content-type'] || 'belirtilmemiş'}`);
   
   try {
     // İsteği logla
@@ -75,11 +73,6 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
     
     logger.debug(`[${requestId}] İstek gövdesi: ${requestBody}`);
     
-    // SOAPAction başlığını alma - ama hedef sunucuya gönderirken yapılandırma dosyasındaki değeri kullan
-    const clientSoapAction = req.headers['soapaction'] || '';
-    logger.debug(`[${requestId}] Client SOAPAction: ${clientSoapAction}`);
-    logger.debug(`[${requestId}] Kullanılacak SOAPAction: ${config.soapAction}`);
-
     // Request XML'den içeriği çıkartma
     let xmlContent = requestBody;
     try {
@@ -95,98 +88,40 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
       logger.warn(`[${requestId}] XML içeriği çıkartılamadı: ${e.message}`);
     }
     
-    // İsteği doğrudan hedef sunucuya yönlendir
-    logger.info(`[${requestId}] İstek ${config.targetUrl} adresine yönlendiriliyor`);
+    // İsteği HTTP POST formatında hedef sunucuya gönder
+    logger.info(`[${requestId}] İstek HTTP POST formatında ${config.targetUrl} adresine yönlendiriliyor`);
     
-    // Farklı format türlerini dene - ilk olarak XML formatında dene
-    try {
-      logger.info(`[${requestId}] XML formatında istek deneniyor`);
-      const response = await axios.post(config.targetUrl, xmlContent, {
+    const response = await axios.post(config.targetUrl, 
+      new URLSearchParams({ 'Request': xmlContent }), 
+      {
         headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction': config.soapAction
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
         responseType: 'text',
-        timeout: 30000
+        timeout: 30000 // 30 saniye zaman aşımı
       });
-      
-      // Yanıtı logla
-      logger.info(`[${requestId}] Hedef sunucudan ${response.status} yanıtı alındı (XML)`);
-      logger.debug(`[${requestId}] Yanıt gövdesi: ${response.data}`);
-      
-      // Yanıtı istemciye gönder
-      res.status(response.status);
-      res.set('Content-Type', 'text/xml; charset=utf-8');
-      res.send(response.data);
-      
-      // İşlem süresini logla
-      const duration = Date.now() - startTime;
-      logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
-      return;
-    } catch (xmlError) {
-      logger.warn(`[${requestId}] XML formatında istek başarısız: ${xmlError.message}`);
-      
-      // XML başarısız olursa form-urlencoded dene
-      try {
-        logger.info(`[${requestId}] Form-urlencoded formatında istek deneniyor`);
-        const formResponse = await axios.post(config.targetUrl, 
-          new URLSearchParams({ 'Request': xmlContent }), 
-          {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'SOAPAction': config.soapAction
-            },
-            responseType: 'text',
-            timeout: 30000
-          });
-        
-        // Yanıtı logla
-        logger.info(`[${requestId}] Hedef sunucudan ${formResponse.status} yanıtı alındı (Form)`);
-        logger.debug(`[${requestId}] Yanıt gövdesi: ${formResponse.data}`);
-        
-        // Yanıtı istemciye gönder
-        res.status(formResponse.status);
-        res.set('Content-Type', 'text/xml; charset=utf-8');
-        res.send(formResponse.data);
-        
-        // İşlem süresini logla
-        const duration = Date.now() - startTime;
-        logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
-        return;
-      } catch (formError) {
-        logger.warn(`[${requestId}] Form-urlencoded formatında istek başarısız: ${formError.message}`);
-        
-        // Orijinal SOAP XML'i olduğu gibi göndermeyi dene
-        try {
-          logger.info(`[${requestId}] Orijinal SOAP XML formatında istek deneniyor`);
-          const soapResponse = await axios.post(config.targetUrl, requestBody, {
-            headers: {
-              'Content-Type': 'text/xml; charset=utf-8',
-              'SOAPAction': config.soapAction
-            },
-            responseType: 'text',
-            timeout: 30000
-          });
-          
-          // Yanıtı logla
-          logger.info(`[${requestId}] Hedef sunucudan ${soapResponse.status} yanıtı alındı (SOAP XML)`);
-          logger.debug(`[${requestId}] Yanıt gövdesi: ${soapResponse.data}`);
-          
-          // Yanıtı istemciye gönder
-          res.status(soapResponse.status);
-          res.set('Content-Type', 'text/xml; charset=utf-8');
-          res.send(soapResponse.data);
-          
-          // İşlem süresini logla
-          const duration = Date.now() - startTime;
-          logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
-          return;
-        } catch (soapError) {
-          logger.error(`[${requestId}] Tüm istek formatları başarısız oldu`);
-          throw soapError;
-        }
-      }
-    }
+    
+    // Yanıtı logla
+    logger.info(`[${requestId}] Hedef sunucudan ${response.status} yanıtı alındı`);
+    logger.debug(`[${requestId}] Yanıt gövdesi: ${response.data}`);
+    
+    // Yanıtı SOAP formatına çevir ve istemciye gönder
+    const soapResponse = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ExecuteTransactionResponse xmlns="http://tempuri.org/Intellect/ExecuteTransaction">
+      <ExecuteTransactionResult>${escapeXml(response.data)}</ExecuteTransactionResult>
+    </ExecuteTransactionResponse>
+  </soap:Body>
+</soap:Envelope>`;
+    
+    res.status(200);
+    res.set('Content-Type', 'text/xml; charset=utf-8');
+    res.send(soapResponse);
+    
+    // İşlem süresini logla
+    const duration = Date.now() - startTime;
+    logger.info(`[${requestId}] İşlem tamamlandı, süre: ${duration}ms`);
     
   } catch (error) {
     logger.error(`[${requestId}] Hata oluştu: ${error.message}`);
@@ -196,10 +131,22 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
       logger.error(`[${requestId}] Yanıt durumu: ${error.response.status}`);
       logger.error(`[${requestId}] Yanıt gövdesi: ${error.response.data}`);
       
-      // Hata yanıtını istemciye gönder
-      res.status(error.response.status);
+      // Hata yanıtını SOAP formatında istemciye gönder
+      const errorResponse = `
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <soap:Fault>
+              <faultcode>soap:Server</faultcode>
+              <faultstring>${error.message}</faultstring>
+              <detail>${error.response.data || 'Hedef sunucu hatası'}</detail>
+            </soap:Fault>
+          </soap:Body>
+        </soap:Envelope>
+      `;
+      
+      res.status(500);
       res.set('Content-Type', 'text/xml; charset=utf-8');
-      res.send(error.response.data);
+      res.send(errorResponse);
     } else {
       // Genel hata yanıtı
       const errorResponse = `
@@ -225,6 +172,17 @@ app.post('/Intellect/ExecuteTransaction.asmx', async (req, res) => {
   }
 });
 
+// XML karakterlerini escape etme yardımcı fonksiyonu
+function escapeXml(unsafe) {
+  if (!unsafe) return '';
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 // WSDL dosyası isteği için endpoint
 app.get('/Intellect/ExecuteTransaction.asmx', (req, res) => {
   logger.info('ExecuteTransaction.asmx endpoint\'ine GET isteği geldi');
@@ -232,8 +190,11 @@ app.get('/Intellect/ExecuteTransaction.asmx', (req, res) => {
     // WSDL dosyasını oku ve gönder
     logger.info('WSDL dosyası istendi');
     
+    // WSDL URL'ini hesapla (ExecuteTransaction.asmx sonu olmadan)
+    const baseUrl = config.targetUrl.replace('/ExecuteTransaction', '');
+    
     // Hedef servisten WSDL'i al
-    axios.get(`${config.targetUrl}?wsdl`)
+    axios.get(`${baseUrl}?wsdl`)
       .then(response => {
         logger.info('WSDL alındı ve gönderiliyor');
         res.type('application/xml');
@@ -264,8 +225,7 @@ app.get('/status', (req, res) => {
     status: 'up',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    targetUrl: config.targetUrl,
-    soapAction: config.soapAction
+    targetUrl: config.targetUrl
   });
 });
 
@@ -280,7 +240,6 @@ app.listen(config.port, () => {
   logger.info(`SOAP Middleware ${config.port} portunda başlatıldı`);
   logger.info(`Hedef URL: ${config.targetUrl}`);
   logger.info(`SOAP Endpoint: /Intellect/ExecuteTransaction.asmx`);
-  logger.info(`SOAPAction: ${config.soapAction}`);
 });
 
 // Beklenmedik hatalar için işleyici
